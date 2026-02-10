@@ -326,64 +326,74 @@ function loadProject(projectId) {
     });
 }
 
-// ===== Real-time Sync (WebSockets) =====
+// ===== Real-time Sync (WebSockets Optimizado) =====
 function setupRealtimeSync(projectId) {
-    // 1. Listen for Files
+    // Referencia a los archivos del proyecto
     filesRef = db.ref(`projects/${projectId}/files`);
-    filesRef.on('value', (snapshot) => {
-        const data = snapshot.val();
-        if (!data) {
-            files = {};
-            renderFileList();
-            return;
+
+    // 1. ADDED: Cuando se crea o carga un archivo nuevo
+    filesRef.on('child_added', (snapshot) => {
+        const remoteFile = snapshot.val();
+        const encodedName = snapshot.key;
+        const decodedName = decodeFirebasePath(encodedName);
+
+        files[decodedName] = remoteFile;
+        renderFileList(); // Actualizar lista para mostrar el nuevo archivo
+
+        // Si es el primer archivo y no hay nada abierto, abrirlo
+        if (!currentFile && decodedName === 'index.html') {
+            openFile('index.html');
         }
+    });
 
-        const remoteFiles = {};
-        Object.keys(data).forEach(encodedName => {
-            const decodedName = decodeFirebasePath(encodedName);
-            const remoteFile = data[encodedName];
-            remoteFiles[decodedName] = remoteFile;
+    // 2. CHANGED: Cuando cambia el contenido de un archivo
+    filesRef.on('child_changed', (snapshot) => {
+        const remoteFile = snapshot.val();
+        const encodedName = snapshot.key;
+        const decodedName = decodeFirebasePath(encodedName);
 
-            // Check if we need to update local content
-            const localFile = files[decodedName];
+        // Actualizar estado local
+        files[decodedName] = remoteFile;
 
-            // Update if:
-            // 1. We don't have the file locally
-            // 2. OR Remote is newer AND we are NOT currently focused on editor for this file (avoid cursor jump)
-            // 3. OR It's a different file than the one currently open
-            if (!localFile ||
-                (currentFile !== decodedName) ||
-                (remoteFile.lastModified > (localFile.lastModified || 0) && document.activeElement !== document.getElementById('codeEditor'))
-            ) {
+        // Solo actualizar el editor si:
+        // A) Es el archivo que estoy viendo
+        // B) Y el cambio NO lo hice yo (chequeando modifiedBy o si estoy escribiendo activamente)
+        if (currentFile === decodedName) {
+            const editor = document.getElementById('codeEditor');
 
-                files[decodedName] = remoteFile;
+            // Si el usuario remoto NO soy yo, actualizamos
+            if (remoteFile.modifiedBy !== currentUser.username) {
+                // Guardar posición del cursor
+                const cursorPos = editor.selectionStart;
+                editor.value = remoteFile.content || '';
+                // Intentar restaurar cursor (aunque puede saltar si el contenido cambió mucho de longitud)
+                editor.setSelectionRange(cursorPos, cursorPos);
 
-                // If it's the open file, update editor content carefully
-                if (currentFile === decodedName && !isLocalDirty()) {
-                    const editor = document.getElementById('codeEditor');
-                    const cursorPos = editor.selectionStart;
-                    isUpdatingFromFirebase = true;
-                    editor.value = remoteFile.content || '';
-                    editor.setSelectionRange(cursorPos, cursorPos);
-                    isUpdatingFromFirebase = false;
-                    updatePreview();
+                // Actualizar preview si corresponde
+                if (['index.html', 'style.css', 'script.js'].includes(decodedName)) {
+                    // No recargamos el iframe automáticamente para no molestar,
+                    // o usamos una lógica muy sutil.
                 }
             }
-        });
+        }
+    });
 
-        // Handle deletions
-        Object.keys(files).forEach(f => {
-            if (!remoteFiles[f]) delete files[f];
-        });
+    // 3. REMOVED: Cuando se elimina un archivo
+    filesRef.on('child_removed', (snapshot) => {
+        const encodedName = snapshot.key;
+        const decodedName = decodeFirebasePath(encodedName);
 
-        // Initial open
-        if (!currentFile && files['index.html']) openFile('index.html');
-        else if (!currentFile && Object.keys(files).length > 0) openFile(Object.keys(files)[0]);
+        delete files[decodedName];
 
+        if (currentFile === decodedName) {
+            currentFile = null;
+            document.getElementById('codeEditor').value = '';
+            document.getElementById('currentFileName').textContent = 'Eliminado';
+        }
         renderFileList();
     });
 
-    // 2. Presence System
+    // 4. Presence System
     setupPresence(projectId);
 }
 

@@ -51,16 +51,19 @@ export default {
             // Inyectar script de auto-reload (opcional, para refresco en tiempo real)
             if (contentType.includes('html')) {
                 content += `
-        <script>
-          // Simple auto-reload logic listener could go here
-          console.log('[Collab] Vista previa cargada desde Cloudflare Worker');
-        </script>`;
+            <script>
+            // Simple auto-reload logic listener could go here
+            console.log('[Collab] Vista previa cargada desde Cloudflare Worker');
+            </script>`;
             }
 
             return new Response(content, {
                 headers: {
                     'Content-Type': contentType,
-                    'Access-Control-Allow-Origin': '*' // Permitir iframe desde cualquier lado
+                    'Access-Control-Allow-Origin': '*', // Permitir iframe desde cualquier lado
+                    'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
                 }
             });
 
