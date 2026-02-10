@@ -9,6 +9,9 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap"
         rel="stylesheet">
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 </head>
 
 <body>
@@ -56,18 +59,17 @@
             <!-- Register Form -->
             <form class="auth-form" id="registerForm">
                 <div class="form-group">
-                    <label for="registerUsername">Usuario</label>
-                    <input type="text" id="registerUsername" placeholder="Elige un nombre de usuario"
-                        autocomplete="username" required>
+                    <label for="registerUsername">Usuario (para mostrar)</label>
+                    <input type="text" id="registerUsername" placeholder="Ej: DevMaster" autocomplete="username"
+                        required>
+                </div>
+                <div class="form-group">
+                    <label for="registerEmail">Email</label>
+                    <input type="email" id="registerEmail" placeholder="tu@email.com" autocomplete="email" required>
                 </div>
                 <div class="form-group">
                     <label for="registerPassword">Contraseña</label>
-                    <input type="password" id="registerPassword" placeholder="Elige una contraseña"
-                        autocomplete="new-password" required>
-                </div>
-                <div class="form-group">
-                    <label for="registerPasswordConfirm">Confirmar Contraseña</label>
-                    <input type="password" id="registerPasswordConfirm" placeholder="Confirma tu contraseña"
+                    <input type="password" id="registerPassword" placeholder="Mínimo 6 caracteres"
                         autocomplete="new-password" required>
                 </div>
                 <button type="submit" class="btn btn-primary btn-block">Registrarse</button>
