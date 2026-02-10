@@ -244,30 +244,17 @@ function createProject() {
     const newProjectRef = db.ref('projects').push();
     const projectId = newProjectRef.key;
 
-    const projectData = {
-        name,
-        description,
-        owner: currentUser.uid,
-        ownerUsername: currentUser.username, // Denormalize for easy display
-        createdAt: firebase.database.ServerValue.TIMESTAMP,
-        sharedWith: {} // Using object for efficient lookups
-    };
-
-    // Optimized: Multi-path update
-    const updates = {};
-    updates[`projects/${projectId}`] = projectData;
-    updates[`users/${currentUser.uid}/projects/${projectId}`] = { name, role: 'owner' };
-
-    // Default Files
+    // 1. Prepare default files logic
     const defaultFiles = {
         'index.html': `<!DOCTYPE html>\n<html lang="es">\n<head>\n  <meta charset="UTF-8">\n  <title>${name}</title>\n  <link rel="stylesheet" href="style.css">\n</head>\n<body>\n  <div class="container">\n    <h1>${name}</h1>\n    <p>¡Hola Mundo desde CollabCode!</p>\n  </div>\n  <script src="script.js"></script>\n</body>\n</html>`,
         'style.css': `body { font-family: sans-serif; background: #0a0b0d; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }\n.container { text-align: center; }`,
         'script.js': `console.log('Proyecto ${name} iniciado');`
     };
 
+    const filesData = {};
     Object.entries(defaultFiles).forEach(([fname, content]) => {
         const encoded = encodeFirebasePath(fname);
-        updates[`projects/${projectId}/files/${encoded}`] = {
+        filesData[encoded] = {
             name: fname,
             content: content,
             type: getFileType(fname),
@@ -275,6 +262,22 @@ function createProject() {
             modifiedBy: currentUser.username
         };
     });
+
+    // 2. Construct full project object
+    const projectData = {
+        name,
+        description,
+        owner: currentUser.uid,
+        ownerUsername: currentUser.username,
+        createdAt: firebase.database.ServerValue.TIMESTAMP,
+        sharedWith: {},
+        files: filesData // Include files directly inside projectData
+    };
+
+    // 3. Update Firebase (no overlapping paths now)
+    const updates = {};
+    updates[`projects/${projectId}`] = projectData;
+    updates[`users/${currentUser.uid}/projects/${projectId}`] = { name, role: 'owner' };
 
     db.ref().update(updates)
         .then(() => {
@@ -287,6 +290,12 @@ function createProject() {
             console.error(error);
             showToast('Error al crear proyecto', 'error');
         });
+}
+
+// ===== Project Loading Logic =====
+function loadUserProjects() {
+    // Placeholder for initial project loading if needed.
+    console.log("Projects ready to load via modal");
 }
 
 function loadProject(projectId) {
