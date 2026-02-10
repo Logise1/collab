@@ -193,6 +193,15 @@ function setupMainAppListeners() {
         showToast('Vista previa actualizada', 'info');
     });
 
+    document.getElementById('openInNewTabBtn').addEventListener('click', () => {
+        if (currentProject) {
+            const url = `https://collab.logise1123.workers.dev/view/${currentProject}/index.html`;
+            window.open(url, '_blank');
+        } else {
+            showToast('Abre un proyecto primero', 'warning');
+        }
+    });
+
     // Editor Logic
     let editTimeout;
     const editor = document.getElementById('codeEditor');
@@ -208,12 +217,13 @@ function setupMainAppListeners() {
         clearTimeout(editTimeout);
         editTimeout = setTimeout(() => {
             saveFileToFirebase(currentFile, e.target.value);
-        }, 500);
-
-        // Instant preview update for smooth feeling
-        if (['index.html', 'style.css', 'script.js'].includes(currentFile) || files['index.html']) {
-            updatePreview();
-        }
+            // Update preview only after save if strictly necessary, 
+            // but with Worker approach it's better to let user refresh manually or use auto-reload script
+            if (['index.html', 'style.css', 'script.js'].includes(currentFile)) {
+                // Optional: updatePreview(); // Uncomment if you want auto-refresh on save
+                // For now, let's update the status but not reload the iframe continuously
+            }
+        }, 1000); // Save after 1s
     });
 
     editor.addEventListener('keyup', updateCursorPosition);
@@ -478,20 +488,15 @@ function deleteCurrentFile() {
 
 // ===== UI & Helpers =====
 function updatePreview() {
+    if (!currentProject) return;
+
     const iframe = document.getElementById('preview');
-    if (!files['index.html']) return;
+    // Usamos timestamp para evitar caché
+    const workerUrl = `https://collab.logise1123.workers.dev/view/${currentProject}/index.html?t=${Date.now()}`;
 
-    let html = files['index.html'].content || '';
-    const css = (files['style.css'] || files['styles.css'] || {}).content || '';
-    const js = (files['script.js'] || {}).content || '';
-
-    if (css) html = html.replace('</head>', `<style>${css}</style></head>`).replace('<head>', `<head><style>${css}</style>`);
-    if (js) html += `<script>${js}<\/script>`; // Simple append for robustness
-
-    const doc = iframe.contentDocument || iframe.contentWindow.document;
-    doc.open();
-    doc.write(html);
-    doc.close();
+    // Forzamos la carga de la URL
+    iframe.src = workerUrl;
+    iframe.dataset.projectId = currentProject;
 }
 
 function renderFileList() {
