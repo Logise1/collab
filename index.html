@@ -58,13 +58,13 @@
             <!-- Register Form -->
             <form class="auth-form" id="registerForm">
                 <div class="form-group">
+                    <label for="registerEmail">Email</label>
+                    <input type="email" id="registerEmail" placeholder="tu@email.com" autocomplete="email" required>
+                </div>
+                <div class="form-group">
                     <label for="registerUsername">Usuario (para mostrar)</label>
                     <input type="text" id="registerUsername" placeholder="Ej: DevMaster" autocomplete="username"
                         required>
-                </div>
-                <div class="form-group">
-                    <label for="registerEmail">Email</label>
-                    <input type="email" id="registerEmail" placeholder="tu@email.com" autocomplete="email" required>
                 </div>
                 <div class="form-group">
                     <label for="registerPassword">Contraseña</label>
@@ -231,7 +231,7 @@
                             </button>
                         </div>
                     </div>
-                    <textarea class="code-editor" id="codeEditor" spellcheck="false"></textarea>
+                    <div id="monacoEditorContainer" style="flex:1; width:100%; position: relative;"></div>
                     <div class="editor-footer">
                         <div class="cursor-info">
                             <span>Línea: <span id="lineNumber">1</span></span>
@@ -421,6 +421,16 @@
 
     <!-- Toast Notifications -->
     <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Monaco Editor Scripts -->
+    <script>var require = { paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } };</script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+    <script>
+        require(['vs/editor/editor.main'], function () {
+            window.monacoReady = true;
+            if (window.initMonacoEditor) window.initMonacoEditor();
+        });
+    </script>
 
     <script src="app.js"></script>
 </body>

@@ -203,31 +203,14 @@ function setupMainAppListeners() {
     });
 
     // Editor Logic
-    let editTimeout;
-    const editor = document.getElementById('codeEditor');
-    editor.addEventListener('input', (e) => {
-        if (!currentFile || isUpdatingFromFirebase) return;
+    // Handled mainly by window.initMonacoEditor now
 
-        // Local optimisitic update
-        if (files[currentFile]) {
-            files[currentFile].content = e.target.value;
+    // Format Button
+    document.getElementById('formatBtn').addEventListener('click', () => {
+        if (monacoEditor) {
+            monacoEditor.getAction('editor.action.formatDocument').run();
         }
-
-        // Debounce save
-        clearTimeout(editTimeout);
-        editTimeout = setTimeout(() => {
-            saveFileToFirebase(currentFile, e.target.value);
-            // Update preview only after save if strictly necessary, 
-            // but with Worker approach it's better to let user refresh manually or use auto-reload script
-            if (['index.html', 'style.css', 'script.js'].includes(currentFile)) {
-                // Optional: updatePreview(); // Uncomment if you want auto-refresh on save
-                // For now, let's update the status but not reload the iframe continuously
-            }
-        }, 1000); // Save after 1s
     });
-
-    editor.addEventListener('keyup', updateCursorPosition);
-    editor.addEventListener('click', updateCursorPosition);
 
     // File Types
     document.querySelectorAll('.file-type-btn').forEach(btn => {
@@ -237,6 +220,93 @@ function setupMainAppListeners() {
             input.focus();
         });
     });
+}
+
+let slowWorkerTimeout;
+let monacoEditor = null;
+let cursorsDecorations = [];
+let openTabs = [];
+
+window.initMonacoEditor = function () {
+    monacoEditor = monaco.editor.create(document.getElementById('monacoEditorContainer'), {
+        value: '',
+        language: 'html',
+        theme: 'vs-dark',
+        automaticLayout: true,
+        minimap: { enabled: false }
+    });
+
+    monacoEditor.onDidChangeModelContent((e) => {
+        if (!currentFile || isUpdatingFromFirebase) return;
+
+        const val = monacoEditor.getValue();
+        if (files[currentFile]) {
+            files[currentFile].content = val;
+        }
+
+        updateCursorPositionLocal();
+
+        db.ref(`projects/${currentProject}/files/${encodeFirebasePath(currentFile)}`).update({
+            content: val,
+            lastModified: firebase.database.ServerValue.TIMESTAMP,
+            modifiedBy: currentUser.username
+        });
+        document.getElementById('syncStatus').querySelector('span').textContent = 'Guardado';
+
+        clearTimeout(slowWorkerTimeout);
+        slowWorkerTimeout = setTimeout(() => {
+            if (['index.html', 'style.css', 'script.js'].includes(currentFile)) {
+                updatePreview();
+            }
+        }, 3000); // Save after 3s to worker/preview
+    });
+
+    monacoEditor.onDidChangeCursorPosition((e) => {
+        updateCursorPositionLocal();
+    });
+
+    if (currentFile && files[currentFile]) {
+        openFile(currentFile);
+    }
+};
+
+function renderTabs() {
+    const tabsContainer = document.getElementById('tabs');
+    tabsContainer.innerHTML = '';
+
+    openTabs.forEach(fileName => {
+        const isActive = currentFile === fileName;
+        const tabEl = document.createElement('button');
+        tabEl.className = `tab ${isActive ? 'active' : ''}`;
+        tabEl.innerHTML = `
+            ${fileName}
+            <span class="tab-close" onclick="closeTab(event, '${fileName}')">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor">
+                    <path d="M3.5 10.5L10.5 3.5"></path>
+                    <path d="M3.5 3.5L10.5 10.5"></path>
+                </svg>
+            </span>
+        `;
+        tabEl.onclick = () => openFile(fileName);
+        tabsContainer.appendChild(tabEl);
+    });
+}
+
+window.closeTab = function (e, fileName) {
+    e.stopPropagation();
+    openTabs = openTabs.filter(t => t !== fileName);
+    if (currentFile === fileName) {
+        if (openTabs.length > 0) {
+            openFile(openTabs[openTabs.length - 1]);
+        } else {
+            currentFile = null;
+            if (monacoEditor) monacoEditor.setValue('');
+            document.getElementById('currentFileName').textContent = 'Sin archivo seleccionado';
+            document.getElementById('currentFileType').textContent = '';
+        }
+    }
+    renderTabs();
+    renderFileList();
 }
 
 function detachListeners() {
@@ -362,17 +432,15 @@ function setupRealtimeSync(projectId) {
             const editor = document.getElementById('codeEditor');
 
             // Si el usuario remoto NO soy yo, actualizamos
-            if (remoteFile.modifiedBy !== currentUser.username) {
-                // Guardar posición del cursor
-                const cursorPos = editor.selectionStart;
-                editor.value = remoteFile.content || '';
-                // Intentar restaurar cursor (aunque puede saltar si el contenido cambió mucho de longitud)
-                editor.setSelectionRange(cursorPos, cursorPos);
-
-                // Actualizar preview si corresponde
-                if (['index.html', 'style.css', 'script.js'].includes(decodedName)) {
-                    // No recargamos el iframe automáticamente para no molestar,
-                    // o usamos una lógica muy sutil.
+            if (remoteFile.modifiedBy !== currentUser.username || (monacoEditor && remoteFile.content !== monacoEditor.getValue())) {
+                if (remoteFile.modifiedBy !== currentUser.username) {
+                    isUpdatingFromFirebase = true;
+                    if (monacoEditor) {
+                        const pos = monacoEditor.getPosition();
+                        monacoEditor.setValue(remoteFile.content || '');
+                        monacoEditor.setPosition(pos);
+                    }
+                    isUpdatingFromFirebase = false;
                 }
             }
         }
@@ -429,6 +497,7 @@ function setupPresence(projectId) {
         const count = Object.keys(projectUsers).length;
         document.getElementById('userCount').textContent = count;
         renderFileList(); // Update avatars
+        renderCursors(); // Render floating cursors
     });
 }
 
@@ -437,13 +506,27 @@ function openFile(fileName) {
     if (!files[fileName]) return;
     currentFile = fileName;
 
+    if (!openTabs.includes(fileName)) {
+        openTabs.push(fileName);
+    }
+
     const file = files[fileName];
-    const editor = document.getElementById('codeEditor');
-    editor.value = file.content || '';
+
+    if (monacoEditor) {
+        isUpdatingFromFirebase = true;
+        monacoEditor.setValue(file.content || '');
+        let lang = 'javascript';
+        if (fileName.endsWith('.html')) lang = 'html';
+        else if (fileName.endsWith('.css')) lang = 'css';
+        else if (fileName.endsWith('.json')) lang = 'json';
+        monaco.editor.setModelLanguage(monacoEditor.getModel(), lang);
+        isUpdatingFromFirebase = false;
+    }
 
     document.getElementById('currentFileName').textContent = fileName;
     document.getElementById('currentFileType').textContent = file.type.toUpperCase();
 
+    renderTabs();
     renderFileList();
     updatePreview();
 
@@ -608,10 +691,79 @@ function encodeFirebasePath(path) { return path.replace(/\./g, '_DOT_').replace(
 function decodeFirebasePath(path) { return path.replace(/_DOT_/g, '.').replace(/_SLASH_/g, '/'); }
 function getFileType(n) { return n.split('.').pop(); }
 function getFileIcon(t) { return '<svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/></svg>'; } // simplified
-function stringToColor(str) { return '#667eea'; } // simplified
+function stringToColor(str) {
+    // basic hash to color
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
+    return '#' + '000000'.substring(0, 6 - c.length) + c;
+}
 function showToast(m, t) { console.log(m); } // simplistic fallback 
 function formatCode() { } // stub
-function updateCursorPosition() { } // stub
 function isLocalDirty() { return false; } // stub helper
 
-// Helper to fully overwrite app.js logic
+function getCaretCoordinates(element, position) {
+    return { top: 0, left: 0, height: 18 };
+}
+
+function updateCursorPositionLocal() {
+    if (!currentProject || !currentFile || !currentUser || !monacoEditor) return;
+
+    const pos = monacoEditor.getPosition();
+    if (pos) {
+        db.ref(`projects/${currentProject}/presence/${currentUser.uid}`).update({
+            cursorPos: pos
+        });
+        document.getElementById('lineNumber').textContent = pos.lineNumber;
+        document.getElementById('columnNumber').textContent = pos.column;
+    }
+}
+
+function renderCursors() {
+    if (!currentProject || !currentFile || !monacoEditor || typeof monaco === 'undefined') return;
+
+    let newDecorations = [];
+    Object.keys(projectUsers).forEach(uid => {
+        if (uid === currentUser.uid) return;
+        const user = projectUsers[uid];
+        if (user.viewingFile !== currentFile || !user.cursorPos || user.state !== 'online') return;
+
+        const color = stringToColor(user.username);
+        let styleId = 'cursor-style-' + uid;
+        let styleEl = document.getElementById(styleId);
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = styleId;
+            document.head.appendChild(styleEl);
+        }
+
+        styleEl.innerHTML = `
+            .cursor-uid-${uid} {
+                position: absolute;
+                border-left: 2px solid ${color};
+                z-index: 100;
+            }
+            .cursor-uid-${uid}::after {
+                content: '${user.username}';
+                position: absolute;
+                top: -16px;
+                left: 0;
+                background: ${color};
+                color: white;
+                font-size: 10px;
+                padding: 1px 4px;
+                border-radius: 2px;
+                white-space: nowrap;
+                pointer-events: none;
+                z-index: 101;
+            }
+        `;
+
+        newDecorations.push({
+            range: new monaco.Range(user.cursorPos.lineNumber, user.cursorPos.column, user.cursorPos.lineNumber, user.cursorPos.column),
+            options: { className: `cursor-uid-${uid}` }
+        });
+    });
+
+    cursorsDecorations = monacoEditor.deltaDecorations(cursorsDecorations, newDecorations);
+}
