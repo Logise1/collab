@@ -246,19 +246,32 @@ window.initMonacoEditor = function () {
 
         updateCursorPositionLocal();
 
-        db.ref(`projects/${currentProject}/files/${encodeFirebasePath(currentFile)}`).update({
-            content: val,
-            lastModified: firebase.database.ServerValue.TIMESTAMP,
-            modifiedBy: currentUser.username
-        });
-        document.getElementById('syncStatus').querySelector('span').textContent = 'Guardado';
-
-        clearTimeout(slowWorkerTimeout);
-        slowWorkerTimeout = setTimeout(() => {
-            if (['index.html', 'style.css', 'script.js'].includes(currentFile)) {
-                updatePreview();
+        if (currentFile && currentFile.endsWith('.css')) {
+            const iframe = document.getElementById('preview');
+            if (iframe && iframe.contentWindow) {
+                iframe.contentWindow.postMessage({ type: 'update-css', filename: currentFile, content: val }, '*');
             }
-        }, 3000); // Save after 3s to worker/preview
+            db.ref(`projects/${currentProject}/files/${encodeFirebasePath(currentFile)}`).update({
+                content: val,
+                lastModified: firebase.database.ServerValue.TIMESTAMP,
+                modifiedBy: currentUser.username
+            });
+            document.getElementById('syncStatus').querySelector('span').textContent = 'Live Reload CSS...';
+        } else {
+            db.ref(`projects/${currentProject}/files/${encodeFirebasePath(currentFile)}`).update({
+                content: val,
+                lastModified: firebase.database.ServerValue.TIMESTAMP,
+                modifiedBy: currentUser.username
+            });
+            document.getElementById('syncStatus').querySelector('span').textContent = 'Guardado';
+
+            clearTimeout(slowWorkerTimeout);
+            slowWorkerTimeout = setTimeout(() => {
+                if (['index.html', 'script.js'].includes(currentFile)) {
+                    updatePreview();
+                }
+            }, 3000); // Save after 3s to worker/preview
+        }
     });
 
     monacoEditor.onDidChangeCursorPosition((e) => {
@@ -308,6 +321,109 @@ window.closeTab = function (e, fileName) {
     renderTabs();
     renderFileList();
 }
+
+window.setupAiListeners = function () {
+    const aiModal = document.getElementById('aiModal');
+    const aiInput = document.getElementById('aiInput');
+    const aiResponseArea = document.getElementById('aiResponseArea');
+    if (!aiModal || !aiInput) return;
+
+    let currentAIAction = '';
+
+    const openAiModal = (actionType) => {
+        currentAIAction = actionType;
+        document.getElementById('aiModalTitle').textContent = actionType === 'fix' ? '✨ Arreglar Error' : '💡 ¿Cómo añado...?';
+        aiInput.value = '';
+        aiInput.placeholder = actionType === 'fix' ? 'Describe el error que estás experimentando (ej: "No veo el botón rojo")...' : '¿Qué nueva funcionalidad o estilo te gustaría añadir?...';
+        aiResponseArea.style.display = 'none';
+        aiResponseArea.innerHTML = '';
+        aiModal.classList.add('show');
+        aiInput.focus();
+    };
+
+    document.getElementById('aiFixBtn').addEventListener('click', () => openAiModal('fix'));
+    document.getElementById('aiAddBtn').addEventListener('click', () => openAiModal('add'));
+    document.getElementById('closeAiModalBtn').addEventListener('click', () => aiModal.classList.remove('show'));
+    document.getElementById('cancelAiBtn').addEventListener('click', () => aiModal.classList.remove('show'));
+
+    document.getElementById('submitAiBtn').addEventListener('click', async () => {
+        const query = aiInput.value.trim();
+        if (!query) return;
+
+        aiResponseArea.style.display = 'block';
+        aiResponseArea.innerHTML = '<i>Analizando con Mistral...</i>';
+        document.getElementById('submitAiBtn').disabled = true;
+
+        const currentCode = monacoEditor ? monacoEditor.getValue() : '';
+        const systemPrompt = currentAIAction === 'fix'
+            ? "Eres un experto en programación web. El usuario tiene un error en el siguiente código de " + (currentFile || 'archivo desconocido') + ". Debes darle la solución indicando paso a paso cómo arreglarlo y proporcionando SOLO las líneas de código verde correctas envueltas en markdown (```). Importante: indica explicitamente al lado los cambios que debes añadir. Se breve y conciso, usando listas html en tu output."
+            : "Eres un experto en desarrollo UI/UX y web. El usuario quiere añadir algo nuevo al archivo " + (currentFile || 'archivo desconocido') + ". Explícale qué propiedad o lógica usar, y proporciónale bloques de código en markdown (```). Importante: usa colores verdes para el código nuevo. Se breve.";
+
+        const messages = [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: `Aquí está mi código actual:\n\`\`\`\n${currentCode}\n\`\`\`\n\nPetición: ${query}` }
+        ];
+
+        try {
+            const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer evxly62Xv91b752fbnHA2I3HD988C5RT',
+                    'Accept': 'text/event-stream'
+                },
+                body: JSON.stringify({
+                    model: 'mistral-large-latest',
+                    messages: messages,
+                    stream: true
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error("API Error: " + response.status);
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            let assistantMessage = '';
+
+            aiResponseArea.innerHTML = '';
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                const chunk = decoder.decode(value, { stream: true });
+                const lines = chunk.split('\n');
+
+                for (let line of lines) {
+                    if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.choices && data.choices[0].delta && data.choices[0].delta.content) {
+                                assistantMessage += data.choices[0].delta.content;
+                                const displayHtml = assistantMessage
+                                    .replace(/```[a-z]*\n([\s\S]*?)```/g, '<div style="background:var(--bg-secondary); border-left:4px solid #10B981; color: #10B981; padding:10px; margin:10px 0; font-family: monospace;">$1</div>')
+                                    .replace(/\n/g, '<br>');
+                                aiResponseArea.innerHTML = displayHtml;
+                                aiResponseArea.scrollTop = aiResponseArea.scrollHeight;
+                            }
+                        } catch (e) { }
+                    }
+                }
+            }
+
+        } catch (err) {
+            aiResponseArea.innerHTML = '<span style="color:#ef4444;">Error consultando Mistral: ' + err.message + '</span>';
+        } finally {
+            document.getElementById('submitAiBtn').disabled = false;
+        }
+    });
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+        if (window.setupAiListeners) window.setupAiListeners();
+    }, 1000);
+});
 
 function detachListeners() {
     if (filesRef) filesRef.off();

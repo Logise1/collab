@@ -52,7 +52,17 @@ export default {
             if (contentType.includes('html')) {
                 content += `
             <script>
-            // Simple auto-reload logic listener could go here
+            window.addEventListener('message', (event) => {
+                if (event.data && event.data.type === 'update-css') {
+                    let overrideStyle = document.getElementById('live-reload-' + event.data.filename);
+                    if (!overrideStyle) {
+                        overrideStyle = document.createElement('style');
+                        overrideStyle.id = 'live-reload-' + event.data.filename;
+                        document.head.appendChild(overrideStyle);
+                    }
+                    overrideStyle.innerHTML = event.data.content;
+                }
+            });
             console.log('[Collab] Vista previa cargada desde Cloudflare Worker');
             </script>`;
             }
