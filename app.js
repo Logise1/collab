@@ -609,7 +609,10 @@ function renderFileList() {
         let avatars = '';
         if (viewers.length > 0) {
             avatars = `<div style="display:flex; gap:2px; margin-left:auto;">
-                ${viewers.map(u => `<div title="${u.username}" style="width:16px;height:16px;border-radius:50%;background:${stringToColor(u.username)};color:white;font-size:8px;display:flex;align-items:center;justify-content:center;">${u.username[0].toUpperCase()}</div>`).join('')}
+                ${viewers.map(u => {
+                const uname = u.username || '?';
+                return `<div title="${uname}" style="width:16px;height:16px;border-radius:50%;background:${stringToColor(uname)};color:white;font-size:8px;display:flex;align-items:center;justify-content:center;">${uname[0].toUpperCase()}</div>`;
+            }).join('')}
             </div>`;
         }
 
@@ -692,6 +695,7 @@ function decodeFirebasePath(path) { return path.replace(/_DOT_/g, '.').replace(/
 function getFileType(n) { return n.split('.').pop(); }
 function getFileIcon(t) { return '<svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/></svg>'; } // simplified
 function stringToColor(str) {
+    if (!str) return '#667eea';
     // basic hash to color
     let hash = 0;
     for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
@@ -744,7 +748,7 @@ function renderCursors() {
                 z-index: 100;
             }
             .cursor-uid-${uid}::after {
-                content: '${user.username}';
+                content: '${user.username || '?'}';
                 position: absolute;
                 top: -16px;
                 left: 0;
