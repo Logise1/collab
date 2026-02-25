@@ -747,9 +747,18 @@ function setupRealtimeSync(projectId) {
                 if (remoteFile.modifiedBy !== currentUser.username) {
                     isUpdatingFromFirebase = true;
                     if (monacoEditor) {
-                        const pos = monacoEditor.getPosition();
-                        monacoEditor.setValue(remoteFile.content || '');
-                        monacoEditor.setPosition(pos);
+                        const model = monacoEditor.getModel();
+                        if (model && remoteFile.content !== undefined && remoteFile.content !== model.getValue()) {
+                            const pos = monacoEditor.getPosition();
+                            // Usamos executeEdits en lugar de setValue para no romper el cursor ni el historial de deshacer
+                            monacoEditor.executeEdits("firebase", [{
+                                range: model.getFullModelRange(),
+                                text: remoteFile.content || ''
+                            }]);
+                            if (pos) {
+                                monacoEditor.setPosition(pos);
+                            }
+                        }
                     }
                     isUpdatingFromFirebase = false;
                 }
