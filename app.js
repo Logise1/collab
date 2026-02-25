@@ -31,6 +31,7 @@ let isUpdatingFromFirebase = false;
 let filesRef = null;
 let presenceRef = null;
 let projectPresenceRef = null;
+let autoBackupInterval = null;
 
 // ===== Initialize App =====
 document.addEventListener('DOMContentLoaded', () => {
@@ -160,12 +161,26 @@ function setupMainAppListeners() {
     if (listenersSet) return; // Prevent double binding
     listenersSet = true;
 
+    // Connection Status
+    const statusDot = document.querySelector('#connectionStatus .status-dot');
+    const statusText = document.querySelector('#connectionStatus span');
+    db.ref('.info/connected').on('value', (snap) => {
+        if (snap.val() === true) {
+            if (statusDot) statusDot.classList.add('connected');
+            if (statusText) statusText.textContent = 'Conectado';
+        } else {
+            if (statusDot) statusDot.classList.remove('connected');
+            if (statusText) statusText.textContent = 'Conectando...';
+        }
+    });
+
     // Modals
     const bindModal = (btnId, modalId, closeIds) => {
         const btn = document.getElementById(btnId);
         if (btn) btn.addEventListener('click', () => {
             document.getElementById(modalId).classList.add('show');
             if (modalId === 'projectsModal') renderProjectsList();
+            if (modalId === 'backupsModal') renderBackupsList();
             if (modalId === 'newProjectModal') document.getElementById('projectNameInput').focus();
             if (modalId === 'newFileModal') document.getElementById('fileNameInput').focus();
         });
@@ -181,6 +196,8 @@ function setupMainAppListeners() {
     bindModal('newProjectBtn', 'newProjectModal', ['closeNewProjectModalBtn', 'cancelNewProjectBtn']);
     bindModal('newFileBtn', 'newFileModal', ['closeModalBtn', 'cancelNewFileBtn']);
     bindModal('shareBtn', 'shareModal', ['closeShareModalBtn', 'cancelShareBtn']);
+    bindModal('backupsBtn', 'backupsModal', ['closeBackupsModalBtn']);
+    document.getElementById('manualBackupBtn').addEventListener('click', () => createBackup(true));
 
     document.getElementById('createProjectBtn').addEventListener('click', createProject);
     document.getElementById('createFileBtn').addEventListener('click', createFile);
@@ -673,6 +690,7 @@ function loadUserProjects() {
 
 function loadProject(projectId) {
     detachListeners(); // Cleanup previous project listeners
+    if (autoBackupInterval) clearInterval(autoBackupInterval);
     currentProject = projectId;
     localStorage.setItem('currentProject', projectId);
 
@@ -756,6 +774,35 @@ function setupRealtimeSync(projectId) {
 
     // 4. Presence System
     setupPresence(projectId);
+
+    // 5. Automatic Backups
+    if (autoBackupInterval) clearInterval(autoBackupInterval);
+    autoBackupInterval = setInterval(() => {
+        checkAndCreateAutoBackup();
+    }, 10 * 60 * 1000); // 10 minutes
+}
+
+function checkAndCreateAutoBackup() {
+    if (!currentProject || !projectUsers || !currentUser) return;
+
+    let allUsers = Object.values(projectUsers);
+    let onlineUsers = allUsers.filter(u => u.state === 'online' && u.username);
+    if (onlineUsers.length === 0) return;
+
+    let longestUser = onlineUsers.reduce((prev, current) => {
+        return (prev.username.length > current.username.length) ? prev : current;
+    });
+
+    let tiedUsers = onlineUsers.filter(u => u.username.length === longestUser.username.length);
+    if (tiedUsers.length > 1) {
+        tiedUsers.sort((a, b) => a.username.localeCompare(b.username));
+        longestUser = tiedUsers[0];
+    }
+
+    if (longestUser.username === currentUser.username) {
+        console.log("Creando backup automático por nombre más largo...");
+        createBackup(false);
+    }
 }
 
 function setupPresence(projectId) {
@@ -963,6 +1010,165 @@ function renderProjectsList() {
     });
 }
 
+// Backups Logic
+function createBackup(isManual = false) {
+    if (!currentProject) return;
+
+    let totalSize = 0;
+    let filesInfo = [];
+    let filesData = {};
+
+    Object.keys(files).forEach(fileName => {
+        const fileContent = files[fileName].content || '';
+        const size = fileContent.length;
+        const lines = fileContent.split('\n').length;
+
+        totalSize += size;
+        filesInfo.push({
+            name: fileName,
+            size: size,
+            lines: lines
+        });
+
+        const encoded = encodeFirebasePath(fileName);
+        filesData[encoded] = files[fileName];
+    });
+
+    const backupData = {
+        timestamp: firebase.database.ServerValue.TIMESTAMP,
+        isManual: isManual,
+        createdBy: currentUser.username,
+        totalSize: totalSize,
+        filesInfo: filesInfo,
+        filesData: filesData
+    };
+
+    const backupsRef = db.ref(`projects/${currentProject}/backups`);
+    backupsRef.push(backupData).then(() => {
+        if (isManual) showToast('Backup creado con éxito', 'success');
+        enforceBackupsLimit();
+        if (document.getElementById('backupsModal').classList.contains('show')) {
+            renderBackupsList();
+        }
+    }).catch(err => {
+        console.error("Error creating backup:", err);
+        if (isManual) showToast('Error al crear backup', 'error');
+    });
+}
+
+function enforceBackupsLimit() {
+    if (!currentProject) return;
+    const backupsRef = db.ref(`projects/${currentProject}/backups`);
+    backupsRef.orderByChild('timestamp').once('value', snapshot => {
+        if (!snapshot.exists()) return;
+
+        const backups = [];
+        snapshot.forEach(child => {
+            backups.push({ id: child.key, ...child.val() });
+        });
+
+        if (backups.length > 20) {
+            const overLimit = backups.length - 20;
+            for (let i = 0; i < overLimit; i++) {
+                backupsRef.child(backups[i].id).remove();
+            }
+        }
+    });
+}
+
+function renderBackupsList() {
+    const list = document.getElementById('backupsList');
+    list.innerHTML = 'Cargando backups...';
+    if (!currentProject) return;
+
+    db.ref(`projects/${currentProject}/backups`).orderByChild('timestamp').once('value', snapshot => {
+        list.innerHTML = '';
+        if (!snapshot.exists()) {
+            list.innerHTML = '<p style="color: var(--text-secondary); text-align: center; margin-top: 1rem;">No hay backups disponibles.</p>';
+            document.getElementById('backupsCount').textContent = '0/20 backups';
+            return;
+        }
+
+        const backups = [];
+        snapshot.forEach(child => {
+            backups.unshift({ id: child.key, ...child.val() }); // unshift to put newest first
+        });
+
+        document.getElementById('backupsCount').textContent = `${backups.length}/20 backups`;
+
+        backups.forEach(backup => {
+            const date = backup.timestamp ? new Date(backup.timestamp).toLocaleString() : 'Fecha desconocida';
+            const sizeKB = (backup.totalSize / 1024).toFixed(2);
+
+            const filesHtml = (backup.filesInfo || []).map(f => `
+                <div style="font-size: 0.8rem; color: var(--text-tertiary); margin-left: 10px;">
+                    📄 ${f.name} - ${f.lines} líneas (${f.size} B)
+                </div>
+            `).join('');
+
+            const item = document.createElement('div');
+            item.className = 'project-card';
+            item.style.display = 'flex';
+            item.style.flexDirection = 'column';
+            item.style.gap = '8px';
+            item.style.cursor = 'default';
+
+            item.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h4 style="margin: 0; font-size: 0.95rem;">Backup - ${date}</h4>
+                    <span style="font-size: 0.8rem; color: var(--text-tertiary); padding: 2px 6px; background: var(--bg-tertiary); border-radius: 4px;">${backup.isManual ? 'Manual' : 'Automático'} • ${backup.createdBy}</span>
+                </div>
+                <div style="font-size: 0.85rem; color: var(--text-secondary);">
+                    Tamaño total: ${sizeKB} KB
+                </div>
+                <div style="margin-top: 5px; background: var(--bg-primary); padding: 8px; border-radius: 4px; display: flex; flex-direction: column; gap: 4px;">
+                    ${filesHtml}
+                </div>
+                <div style="margin-top: 8px; display: flex; justify-content: flex-end;">
+                    <button class="btn btn-primary" onclick="window.rollbackToBackup('${backup.id}')" style="padding: 4px 12px; font-size: 0.8rem;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; vertical-align: middle;">
+                            <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+                            <polyline points="7 1 3 5 7 9"/>
+                            <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+                            <polyline points="17 23 21 19 17 15"/>
+                        </svg>
+                        Hacer Rollback
+                    </button>
+                </div>
+            `;
+            list.appendChild(item);
+        });
+    });
+}
+
+window.rollbackToBackup = function (backupId) {
+    if (!currentProject) return;
+
+    if (!confirm('¿Estás seguro de hacer un rollback? Primero se guardará el estado actual como un backup.')) {
+        return;
+    }
+
+    // Primero, crear backup del estado actual
+    createBackup(true);
+
+    // Ahora restaurar los archivos del backup seleccionado
+    db.ref(`projects/${currentProject}/backups/${backupId}`).once('value', snapshot => {
+        if (!snapshot.exists()) return;
+        const backupData = snapshot.val();
+
+        if (backupData.filesData) {
+            // Remplazar los archivos
+            db.ref(`projects/${currentProject}/files`).set(backupData.filesData).then(() => {
+                showToast('Rollback completado', 'success');
+                document.getElementById('backupsModal').classList.remove('show');
+            }).catch(err => {
+                console.error("Error to rollback:", err);
+                showToast('Error al hacer rollback', 'error');
+            });
+        }
+    });
+};
+
 // Sharing Logic
 function shareProject() {
     const emailToShare = document.getElementById('shareUsernameInput').value.trim(); // User will input email now likely, or username if we index it.
@@ -991,8 +1197,8 @@ function shareProject() {
 
         // Grant access
         const updates = {};
-        updates[`projects/${currentProject}/sharedWith/${targetUid}`] = { username: targetUser.username, email: targetUser.email };
-        updates[`users/${targetUid}/projects/${currentProject}`] = { name: document.getElementById('currentProject').innerText, role: 'editor' };
+        updates[`projects / ${currentProject} / sharedWith / ${targetUid}`] = { username: targetUser.username, email: targetUser.email };
+        updates[`users / ${targetUid} / projects / ${currentProject}`] = { name: document.getElementById('currentProject').innerText, role: 'editor' };
 
         db.ref().update(updates).then(() => {
             showToast(`Compartido con ${targetUser.username}`, 'success');
@@ -1025,7 +1231,7 @@ function updateCursorPositionLocal() {
 
     const pos = monacoEditor.getPosition();
     if (pos) {
-        db.ref(`projects/${currentProject}/presence/${currentUser.uid}`).update({
+        db.ref(`projects / ${currentProject} / presence / ${currentUser.uid}`).update({
             cursorPos: pos
         });
         document.getElementById('lineNumber').textContent = pos.lineNumber;
@@ -1052,30 +1258,30 @@ function renderCursors() {
         }
 
         styleEl.innerHTML = `
-            .cursor-uid-${uid} {
-                position: absolute;
-                border-left: 2px solid ${color};
-                z-index: 100;
-            }
-            .cursor-uid-${uid}::after {
-                content: '${user.username || '?'}';
-                position: absolute;
-                top: -16px;
-                left: 0;
-                background: ${color};
-                color: white;
-                font-size: 10px;
-                padding: 1px 4px;
-                border-radius: 2px;
-                white-space: nowrap;
-                pointer-events: none;
-                z-index: 101;
-            }
+                .cursor - uid - ${uid} {
+                    position: absolute;
+                    border- left: 2px solid ${color};
+            z - index: 100;
+        }
+            .cursor - uid - ${uid}::after {
+            content: '${user.username || ' ? '}';
+            position: absolute;
+            top: -16px;
+            left: 0;
+            background: ${color};
+            color: white;
+            font - size: 10px;
+            padding: 1px 4px;
+            border - radius: 2px;
+            white - space: nowrap;
+            pointer - events: none;
+            z - index: 101;
+        }
         `;
 
         newDecorations.push({
             range: new monaco.Range(user.cursorPos.lineNumber, user.cursorPos.column, user.cursorPos.lineNumber, user.cursorPos.column),
-            options: { className: `cursor-uid-${uid}` }
+            options: { className: `cursor - uid - ${uid} ` }
         });
     });
 
