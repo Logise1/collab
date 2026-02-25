@@ -233,8 +233,7 @@ window.initMonacoEditor = function () {
         language: 'html',
         theme: 'vs-dark',
         automaticLayout: true,
-        minimap: { enabled: false },
-        fixedOverflowWidgets: true
+        minimap: { enabled: false }
     });
 
     monacoEditor.onDidChangeModelContent((e) => {
@@ -290,12 +289,10 @@ function renderTabs() {
 
     openTabs.forEach(fileName => {
         const isActive = currentFile === fileName;
-        const hasSuggestions = window.aiSuggestionsStore && window.aiSuggestionsStore[fileName] && window.aiSuggestionsStore[fileName].length > 0;
         const tabEl = document.createElement('button');
         tabEl.className = `tab ${isActive ? 'active' : ''}`;
         tabEl.innerHTML = `
-            ${hasSuggestions ? '<span style="color: #ef4444; margin-right: 4px;">✨</span>' : ''}
-            <span style="${hasSuggestions ? 'color: #ef4444; font-weight: bold;' : ''}">${fileName}</span>
+            ${fileName}
             <span class="tab-close" onclick="closeTab(event, '${fileName}')">
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor">
                     <path d="M3.5 10.5L10.5 3.5"></path>
@@ -357,27 +354,14 @@ window.setupAiListeners = function () {
         aiResponseArea.innerHTML = '<i>Analizando con Mistral...</i>';
         document.getElementById('submitAiBtn').disabled = true;
 
-        const position = monacoEditor ? monacoEditor.getPosition() : null;
-        const cursorLine = position ? position.lineNumber : 1;
-
-        let allCodeWithLines = '';
-        if (files) {
-            Object.keys(files).forEach(fname => {
-                const lines = files[fname].content.split('\n').map((line, i) => `${i + 1}: ${line}`).join('\n');
-                allCodeWithLines += `--- ARCHIVO: ${fname} ---\n${lines}\n\n`;
-            });
-        }
-
+        const currentCode = monacoEditor ? monacoEditor.getValue() : '';
         const systemPrompt = currentAIAction === 'fix'
-            ? "Eres un experto en programación web. El usuario tiene un error. Debes dar la solución indicando EXACTAMENTE el archivo, la línea y el bloque. RESPONDE SOLO USANDO ESTE FORMATO EXACTO obligatorio (puedes mandar varios bloques incluso en distintos archivos):\n\n[INICIO_CAMBIO]\nARCHIVO: index.html\nLINEA: 15\nBUSCAR:\n<el bloque de código original exacto (sin números de línea) que tiene el error>\nEXPLICACION: Añade esto para arreglar el div\nCODIGO:\n<el nuevo bloque de código corregido>\n[FIN_CAMBIO]\n\nImportante: Es vital rellenar ARCHIVO con el nombre exacto, LINEA con número exacto, y BUSCAR con el texto original calcado. SOLO ARREGLA ESTO QUE TE HA DICHO EL USUARIO, NADA MAS"
-            : "Eres un experto web. El usuario quiere añadir algo al proyecto. RESPONDE SOLO USANDO ESTE FORMATO EXACTO obligatorio (puedes mandar varios bloques si hay varios cambios en distintos archivos):\n\n[INICIO_CAMBIO]\nARCHIVO: style.css\nLINEA: 15\nBUSCAR:\n<bloque original sin números de línea>\nEXPLICACION: Añade este fondo\nCODIGO:\n<tu sugerencia>\n[FIN_CAMBIO]\n\nImportante: Pon ARCHIVO con exactitud, LINEA con el número y en BUSCAR exactamente el texto fuente. Intenta colocarlo donde tenga más sentido técnico. Quiero que simplemente pongas lo que te ha dicho el usuario que pongas y no pongas ABSOLUTAMENTE NADA MAS, NO ARREGLES NADA QUE TENGA EL USUARIO MAL, SOLO PON LO QUE TE DIGA";
-
-        // Hide modal quickly and run in background so user looks at the editor
-        setTimeout(() => aiModal.classList.remove('show'), 1500);
+            ? "Eres un experto en programación web. El usuario tiene un error en el siguiente código de " + (currentFile || 'archivo desconocido') + ". Debes darle la solución indicando paso a paso cómo arreglarlo y proporcionando SOLO las líneas de código verde correctas envueltas en markdown (```). Importante: indica explicitamente al lado los cambios que debes añadir. Se breve y conciso, usando listas html en tu output."
+            : "Eres un experto en desarrollo UI/UX y web. El usuario quiere añadir algo nuevo al archivo " + (currentFile || 'archivo desconocido') + ". Explícale qué propiedad o lógica usar, y proporciónale bloques de código en markdown (```). Importante: usa colores verdes para el código nuevo. Se breve.";
 
         const messages = [
             { role: "system", content: systemPrompt },
-            { role: "user", content: `Aquí están TODOS los archivos del proyecto CON NÚMEROS DE LÍNEA. Úsalos para LINEA y ARCHIVO:\n\n⚠️ NOTA IMPORTANTE: Estoy viendo el archivo "${currentFile}" en la LÍNEA ${cursorLine}. Úsalo como prioridad si mi petición es ambigua.\n\n${allCodeWithLines}\n\nPetición: ${query}` }
+            { role: "user", content: `Aquí está mi código actual:\n\`\`\`\n${currentCode}\n\`\`\`\n\nPetición: ${query}` }
         ];
 
         try {
@@ -402,7 +386,6 @@ window.setupAiListeners = function () {
             const reader = response.body.getReader();
             const decoder = new TextDecoder("utf-8");
             let assistantMessage = '';
-            let processedChanges = 0;
 
             aiResponseArea.innerHTML = '';
             while (true) {
@@ -417,54 +400,8 @@ window.setupAiListeners = function () {
                             const data = JSON.parse(line.slice(6));
                             if (data.choices && data.choices[0].delta && data.choices[0].delta.content) {
                                 assistantMessage += data.choices[0].delta.content;
-
-                                const blockRegex = /\[INICIO_CAMBIO\]\s*ARCHIVO:\s*([^\n]+)\s*LINEA:\s*(\d+)\s*BUSCAR:\s*([\s\S]*?)EXPLICACION:\s*([\s\S]*?)CODIGO:\s*([\s\S]*?)\[FIN_CAMBIO\]/g;
-                                let match;
-                                let matchCount = 0;
-                                while ((match = blockRegex.exec(assistantMessage)) !== null) {
-                                    matchCount++;
-                                    if (matchCount > processedChanges) {
-                                        processedChanges++;
-                                        const targetFile = match[1].trim();
-                                        const targetLine = parseInt(match[2]);
-                                        const originalSearch = match[3].trim();
-                                        const expl = match[4].trim();
-                                        const codePart = match[5].trim();
-
-                                        let finalLineN = targetLine;
-                                        if (monacoEditor && targetFile === currentFile) {
-                                            const matches = monacoEditor.getModel().findMatches(originalSearch, false, false, true, null, false);
-                                            if (matches && matches.length > 0) {
-                                                matches.sort((a, b) => Math.abs(a.range.startLineNumber - targetLine) - Math.abs(b.range.startLineNumber - targetLine));
-                                                finalLineN = matches[0].range.startLineNumber;
-                                            } else {
-                                                const fallbackLineObj = originalSearch.split('\n')[0];
-                                                const fallbackMatches = monacoEditor.getModel().findMatches(fallbackLineObj, false, false, true, null, false);
-                                                if (fallbackMatches && fallbackMatches.length > 0) {
-                                                    fallbackMatches.sort((a, b) => Math.abs(a.range.startLineNumber - targetLine) - Math.abs(b.range.startLineNumber - targetLine));
-                                                    finalLineN = fallbackMatches[0].range.startLineNumber;
-                                                }
-                                            }
-                                        }
-
-                                        if (!window.aiSuggestionsStore) window.aiSuggestionsStore = {};
-                                        if (!window.aiSuggestionsStore[targetFile]) window.aiSuggestionsStore[targetFile] = [];
-
-                                        const existing = window.aiSuggestionsStore[targetFile].find(x => x.expl === expl && x.codePart === codePart);
-                                        if (!existing) {
-                                            const newSugg = { id: 'sug_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9), targetLine: finalLineN, originalSearch, expl, codePart };
-                                            window.aiSuggestionsStore[targetFile].push(newSugg);
-                                            if (targetFile === currentFile && window.addAiSuggestionZone) {
-                                                window.addAiSuggestionZone(newSugg.id, newSugg.targetLine, newSugg.expl, newSugg.codePart, newSugg.originalSearch);
-                                            }
-                                            renderTabs();
-                                            renderFileList();
-                                        }
-                                    }
-                                }
-
                                 const displayHtml = assistantMessage
-                                    .replace(/\[INICIO_CAMBIO\][\s\S]*?ARCHIVO:\s*([^\n]+)[\s\S]*?\[FIN_CAMBIO\]/g, '<div style="color:var(--accent-primary); font-weight:bold; margin-top: 10px;">✅ ✨ Sugerencia creada para el archivo <b>$1</b>. Ábrelo en sus pestañas y revisa las flechas para aplicarlo.</div>')
+                                    .replace(/```[a-z]*\n([\s\S]*?)```/g, '<div style="background:var(--bg-secondary); border-left:4px solid #10B981; color: #10B981; padding:10px; margin:10px 0; font-family: monospace;">$1</div>')
                                     .replace(/\n/g, '<br>');
                                 aiResponseArea.innerHTML = displayHtml;
                                 aiResponseArea.scrollTop = aiResponseArea.scrollHeight;
@@ -480,121 +417,7 @@ window.setupAiListeners = function () {
             document.getElementById('submitAiBtn').disabled = false;
         }
     });
-
 };
-
-window.addAiSuggestionZone = function (id, lineNumber, explanation, codePart, originalSearch) {
-    if (!monacoEditor) return;
-
-    // Auto format code string removing trailing backticks if AI outputs them
-    let cleanCode = codePart.replace(/^```[a-zA-Z]*\n?/, '').replace(/\n?```$/, '');
-    cleanCode = cleanCode.trim();
-
-    monacoEditor.changeViewZones(function (changeAccessor) {
-        const domNode = document.createElement('div');
-        domNode.style.background = '#1e1e2e';
-        domNode.style.border = '1px solid #cba6f7';
-        domNode.style.borderLeft = '4px solid #cba6f7';
-        domNode.style.padding = '10px';
-        domNode.style.zIndex = '10';
-        domNode.style.display = 'flex';
-        domNode.style.flexDirection = 'column';
-        domNode.style.gap = '8px';
-        domNode.style.borderRadius = '4px';
-
-        domNode.innerHTML = `
-            <div style="color: #cba6f7; font-size: 14px; display: flex; align-items: center; gap: 8px;">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M12 2v20M19 15l-7 7-7-7"/>
-                </svg>
-                <span><b>IA Sugiere:</b> ${explanation}</span>
-            </div>
-            <div style="background: #11111b; padding: 10px; border-radius: 4px; font-family: monospace; color: #a6e3a1; overflow-x: auto;">
-                <pre style="margin:0; white-space: pre-wrap; font-size:13px;">${cleanCode.replace(/</g, '&lt;')}</pre>
-            </div>
-            <div style="display: flex; gap: 10px;">
-                <button class="btn btn-primary" style="padding: 4px 12px; font-size: 12px; border-radius: 4px; border:none; background: #cba6f7; color: #11111b; cursor:pointer;" onclick="applyAiSuggestion('${id}', this)">Aplicar Cambio</button>
-                <button class="btn btn-secondary" style="padding: 4px 12px; font-size: 12px; border-radius: 4px; border:1px solid #cba6f7; background:transparent; color:#cba6f7; cursor:pointer;" onclick="removeAiSuggestion('${id}', this)">Descartar</button>
-            </div>
-        `;
-
-        const linesOfCode = cleanCode.split('\n').length;
-        const estimatedHeight = 90 + (linesOfCode * 18);
-
-        const zoneId = changeAccessor.addZone({
-            afterLineNumber: lineNumber > 1 ? lineNumber - 1 : 0, // aparece justo sobre la línea que vamos a sustituir
-            heightInPx: estimatedHeight,
-            domNode: domNode,
-            marginDomNode: null
-        });
-        domNode.dataset.zoneId = zoneId;
-        domNode.dataset.sugId = id;
-
-        window.activeAiZoneIds = window.activeAiZoneIds || [];
-        window.activeAiZoneIds.push(zoneId);
-
-        monacoEditor.revealLineInCenter(lineNumber);
-    });
-};
-
-window.applyAiSuggestion = function (sugId, btn) {
-    const zoneId = btn.closest('[data-zone-id]').dataset.zoneId;
-    monacoEditor.changeViewZones(function (changeAccessor) {
-        changeAccessor.removeZone(zoneId);
-        if (window.activeAiZoneIds) window.activeAiZoneIds = window.activeAiZoneIds.filter(id => id !== zoneId);
-    });
-
-    let suggestionData = null;
-    if (window.aiSuggestionsStore && window.aiSuggestionsStore[currentFile]) {
-        suggestionData = window.aiSuggestionsStore[currentFile].find(s => s.id === sugId);
-        window.aiSuggestionsStore[currentFile] = window.aiSuggestionsStore[currentFile].filter(s => s.id !== sugId);
-        renderTabs();
-        renderFileList();
-    }
-
-    if (!suggestionData) return;
-
-    let cleanCode = suggestionData.codePart.replace(/^```[a-zA-Z]*\n?/, '').replace(/\n?```$/, '').trim();
-
-    let rangeToReplace;
-    if (suggestionData.originalSearch) {
-        const matches = monacoEditor.getModel().findMatches(suggestionData.originalSearch, false, false, true, null, false);
-        if (matches && matches.length > 0) {
-            matches.sort((a, b) => Math.abs(a.range.startLineNumber - suggestionData.targetLine) - Math.abs(b.range.startLineNumber - suggestionData.targetLine));
-            rangeToReplace = matches[0].range;
-        }
-    }
-
-    if (!rangeToReplace) {
-        let safeLine = Math.min(suggestionData.targetLine, monacoEditor.getModel().getLineCount());
-        if (safeLine < 1) safeLine = 1;
-        rangeToReplace = new monaco.Range(safeLine, 1, safeLine, monacoEditor.getModel().getLineMaxColumn(safeLine));
-    }
-
-    monacoEditor.executeEdits("ai-suggestion", [{
-        range: rangeToReplace,
-        text: cleanCode,
-        forceMoveMarkers: true
-    }]);
-
-    setTimeout(() => {
-        if (monacoEditor) monacoEditor.getAction('editor.action.formatDocument').run();
-    }, 100);
-}
-
-window.removeAiSuggestion = function (sugId, btn) {
-    const zoneId = btn.closest('[data-zone-id]').dataset.zoneId;
-    monacoEditor.changeViewZones(function (changeAccessor) {
-        changeAccessor.removeZone(zoneId);
-        if (window.activeAiZoneIds) window.activeAiZoneIds = window.activeAiZoneIds.filter(id => id !== zoneId);
-    });
-
-    if (window.aiSuggestionsStore && window.aiSuggestionsStore[currentFile]) {
-        window.aiSuggestionsStore[currentFile] = window.aiSuggestionsStore[currentFile].filter(s => s.id !== sugId);
-        renderTabs();
-        renderFileList();
-    }
-}
 
 document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => {
@@ -806,13 +629,6 @@ function openFile(fileName) {
     const file = files[fileName];
 
     if (monacoEditor) {
-        if (window.activeAiZoneIds) {
-            monacoEditor.changeViewZones(function (accessor) {
-                window.activeAiZoneIds.forEach(z => accessor.removeZone(z));
-            });
-            window.activeAiZoneIds = [];
-        }
-
         isUpdatingFromFirebase = true;
         monacoEditor.setValue(file.content || '');
         let lang = 'javascript';
@@ -836,14 +652,6 @@ function openFile(fileName) {
             viewingFile: fileName
         });
     }
-
-    setTimeout(() => {
-        if (window.aiSuggestionsStore && window.aiSuggestionsStore[fileName]) {
-            window.aiSuggestionsStore[fileName].forEach(sug => {
-                if (window.addAiSuggestionZone) window.addAiSuggestionZone(sug.id, sug.targetLine, sug.expl, sug.codePart, sug.originalSearch);
-            });
-        }
-    }, 150);
 }
 
 function saveFileToFirebase(fileName, content) {
@@ -914,8 +722,6 @@ function renderFileList() {
         const item = document.createElement('div');
         item.className = `file-item ${isActive ? 'active' : ''}`;
 
-        const hasSuggestions = window.aiSuggestionsStore && window.aiSuggestionsStore[fileName] && window.aiSuggestionsStore[fileName].length > 0;
-
         let avatars = '';
         if (viewers.length > 0) {
             avatars = `<div style="display:flex; gap:2px; margin-left:auto;">
@@ -926,7 +732,7 @@ function renderFileList() {
             </div>`;
         }
 
-        item.innerHTML = `${getFileIcon(file.type)} <span class="file-name" style="${hasSuggestions ? 'color: #ef4444; font-weight: bold;' : ''}">${fileName} ${hasSuggestions ? '✨' : ''}</span> ${avatars}`;
+        item.innerHTML = `${getFileIcon(file.type)} <span class="file-name">${fileName}</span> ${avatars}`;
         item.onclick = () => openFile(fileName);
         list.appendChild(item);
     });
