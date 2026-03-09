@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CollabCode - Mis Proyectos</title>
+    <link rel="stylesheet" href="style.css">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap"
+        rel="stylesheet">
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+</head>
+
+<body class="projects-body">
+
+    <!-- Projects Page -->
+    <div class="projects-page" id="projectsPage" style="display:none;">
+        <header class="projects-header-bar">
+            <div class="projects-header-left">
+                <div class="logo">
+                    <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect width="32" height="32" rx="8" fill="url(#projGrad)" />
+                        <path d="M16 8L21 13L16 18" stroke="white" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round" />
+                        <path d="M11 14L16 19L11 24" stroke="white" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round" />
+                        <defs>
+                            <linearGradient id="projGrad" x1="0" y1="0" x2="32" y2="32">
+                                <stop offset="0%" stop-color="#667eea" />
+                                <stop offset="100%" stop-color="#764ba2" />
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                    <h1>CollabCode</h1>
+                </div>
+            </div>
+            <div class="projects-header-right">
+                <div class="user-pill" id="userPill">
+                    <svg width="16" height="16" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="9" cy="5" r="3" stroke="currentColor" stroke-width="2" />
+                        <path d="M3 16V14C3 12.3431 4.34315 11 6 11H12C13.6569 11 15 12.3431 15 14V16"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    </svg>
+                    <span id="currentUsername">Usuario</span>
+                </div>
+                <button class="btn btn-secondary" id="logoutBtn">
+                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path
+                            d="M7.5 17.5H4.16667C3.72464 17.5 3.30072 17.3244 2.98816 17.0118C2.67559 16.6993 2.5 16.2754 2.5 15.8333V4.16667C2.5 3.72464 2.67559 3.30072 2.98816 2.98816C3.30072 2.67559 3.72464 2.5 4.16667 2.5H7.5"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        <path d="M13.3333 14.1667L17.5 10L13.3333 5.83333" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round" />
+                        <path d="M17.5 10H7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round" />
+                    </svg>
+                    Salir
+                </button>
+            </div>
+        </header>
+
+        <div class="projects-content">
+            <div class="projects-hero">
+                <h2>Mis Proyectos</h2>
+                <p>Selecciona un proyecto para continuar o crea uno nuevo.</p>
+            </div>
+
+            <div class="projects-actions">
+                <button class="btn btn-primary btn-new-project" id="newProjectBtn">
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M9 3.75V14.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                        <path d="M3.75 9H14.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    </svg>
+                    Nuevo Proyecto
+                </button>
+            </div>
+
+            <div class="projects-grid" id="projectsGrid">
+                <div class="projects-loading">
+                    <div class="loading-spinner"></div>
+                    <p>Cargando proyectos...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Project Modal -->
+    <div class="modal" id="newProjectModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Nuevo Proyecto</h3>
+                <button class="btn-icon" id="closeNewProjectModal">
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M13.5 4.5L4.5 13.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                        <path d="M4.5 4.5L13.5 13.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="projectNameInput">Nombre del proyecto</label>
+                    <input type="text" id="projectNameInput" placeholder="Mi Proyecto Genial" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="projectDescInput">Descripción (opcional)</label>
+                    <textarea id="projectDescInput" placeholder="Describe tu proyecto..." rows="3"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelNewProjectBtn">Cancelar</button>
+                <button class="btn btn-primary" id="createProjectBtn">Crear Proyecto</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="firebase-config.js"></script>
+    <script>
+        // Initialize Firebase
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        const db = firebase.database();
+
+        let currentUser = null;
+
+        // ===== Toast Function =====
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            const icons = {
+                success: '✅',
+                error: '❌',
+                warning: '⚠️',
+                info: 'ℹ️'
+            };
+            toast.innerHTML = `
+                <span style="font-size:1.1rem;">${icons[type] || 'ℹ️'}</span>
+                <span class="toast-message">${message}</span>
+            `;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(400px)';
+                toast.style.transition = 'all 0.3s ease';
+                setTimeout(() => toast.remove(), 300);
+            }, 3500);
+        }
+
+        // Auth check
+        auth.onAuthStateChanged(async (user) => {
+            if (!user) {
+                window.location.href = 'index.html';
+                return;
+            }
+
+            try {
+                const snapshot = await db.ref(`users/${user.uid}`).once('value');
+                const userData = snapshot.val();
+                currentUser = {
+                    uid: user.uid,
+                    email: user.email,
+                    username: userData ? userData.username : user.email.split('@')[0]
+                };
+            } catch (e) {
+                currentUser = { uid: user.uid, email: user.email, username: user.email.split('@')[0] };
+            }
+
+            document.getElementById('currentUsername').textContent = currentUser.username;
+            document.getElementById('projectsPage').style.display = 'flex';
+            loadProjects();
+        });
+
+        // Logout
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            auth.signOut().then(() => {
+                window.location.href = 'index.html';
+            });
+        });
+
+        // New Project Modal
+        document.getElementById('newProjectBtn').addEventListener('click', () => {
+            document.getElementById('newProjectModal').classList.add('show');
+            document.getElementById('projectNameInput').focus();
+        });
+
+        function closeNewProjectModal() {
+            document.getElementById('newProjectModal').classList.remove('show');
+            document.getElementById('projectNameInput').value = '';
+            document.getElementById('projectDescInput').value = '';
+        }
+
+        document.getElementById('closeNewProjectModal').addEventListener('click', closeNewProjectModal);
+        document.getElementById('cancelNewProjectBtn').addEventListener('click', closeNewProjectModal);
+
+        document.getElementById('createProjectBtn').addEventListener('click', createProject);
+        document.getElementById('projectNameInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') createProject();
+        });
+
+        function createProject() {
+            const name = document.getElementById('projectNameInput').value.trim();
+            const description = document.getElementById('projectDescInput').value.trim();
+            if (!name) {
+                showToast('El nombre del proyecto es obligatorio', 'warning');
+                return;
+            }
+
+            const btn = document.getElementById('createProjectBtn');
+            btn.disabled = true;
+            btn.textContent = 'Creando...';
+
+            const newProjectRef = db.ref('projects').push();
+            const projectId = newProjectRef.key;
+
+            const defaultFiles = {
+                'index_DOT_html': {
+                    name: 'index.html',
+                    content: `<!DOCTYPE html>\n<html lang="es">\n<head>\n  <meta charset="UTF-8">\n  <title>${name}</title>\n  <link rel="stylesheet" href="style.css">\n</head>\n<body>\n  <div class="container">\n    <h1>${name}</h1>\n    <p>¡Hola Mundo desde CollabCode!</p>\n  </div>\n  <script src="script.js"><\/script>\n</body>\n</html>`,
+                    type: 'html',
+                    lastModified: firebase.database.ServerValue.TIMESTAMP,
+                    modifiedBy: currentUser.username
+                },
+                'style_DOT_css': {
+                    name: 'style.css',
+                    content: `body { font-family: sans-serif; background: #0a0b0d; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }\n.container { text-align: center; }`,
+                    type: 'css',
+                    lastModified: firebase.database.ServerValue.TIMESTAMP,
+                    modifiedBy: currentUser.username
+                },
+                'script_DOT_js': {
+                    name: 'script.js',
+                    content: `console.log('Proyecto ${name} iniciado');`,
+                    type: 'js',
+                    lastModified: firebase.database.ServerValue.TIMESTAMP,
+                    modifiedBy: currentUser.username
+                }
+            };
+
+            const projectData = {
+                name,
+                description,
+                owner: currentUser.uid,
+                ownerUsername: currentUser.username,
+                createdAt: firebase.database.ServerValue.TIMESTAMP,
+                sharedWith: {},
+                files: defaultFiles
+            };
+
+            const updates = {};
+            updates[`projects/${projectId}`] = projectData;
+            updates[`users/${currentUser.uid}/projects/${projectId}`] = { name, role: 'owner', createdAt: firebase.database.ServerValue.TIMESTAMP };
+
+            db.ref().update(updates)
+                .then(() => {
+                    showToast(`Proyecto "${name}" creado`, 'success');
+                    btn.disabled = false;
+                    btn.textContent = 'Crear Proyecto';
+                    closeNewProjectModal();
+                    // Open the editor directly with the new project
+                    sessionStorage.setItem('openProjectId', projectId);
+                    window.location.href = 'editor.html';
+                })
+                .catch(error => {
+                    console.error(error);
+                    showToast('Error al crear el proyecto', 'error');
+                    btn.disabled = false;
+                    btn.textContent = 'Crear Proyecto';
+                });
+        }
+
+        function loadProjects() {
+            const grid = document.getElementById('projectsGrid');
+
+            db.ref(`users/${currentUser.uid}/projects`).once('value', snapshot => {
+                const myProjects = snapshot.val() || {};
+                const keys = Object.keys(myProjects);
+
+                grid.innerHTML = '';
+
+                if (keys.length === 0) {
+                    grid.innerHTML = `
+                        <div class="projects-empty">
+                            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                            </svg>
+                            <h3>No tienes proyectos aún</h3>
+                            <p>Crea tu primer proyecto para empezar a colaborar.</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                // Load details for each project
+                const promises = keys.map(pid =>
+                    db.ref(`projects/${pid}`).once('value').then(s => ({
+                        id: pid,
+                        ...myProjects[pid],
+                        details: s.val()
+                    }))
+                );
+
+                Promise.all(promises).then(projects => {
+                    grid.innerHTML = '';
+                    // Sort by createdAt descending (newest first)
+                    projects.sort((a, b) => {
+                        const aTime = a.details?.createdAt || 0;
+                        const bTime = b.details?.createdAt || 0;
+                        return bTime - aTime;
+                    });
+
+                    projects.forEach(project => {
+                        if (!project.details) return; // Skip deleted projects
+
+                        const card = document.createElement('div');
+                        card.className = 'project-card';
+
+                        const role = project.role === 'owner' ? 'Propietario' : 'Colaborador';
+                        const roleClass = project.role === 'owner' ? 'role-owner' : 'role-editor';
+                        const fileCount = project.details.files ? Object.keys(project.details.files).length : 0;
+                        const desc = project.details.description || '';
+                        const date = project.details.createdAt ? new Date(project.details.createdAt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+
+                        card.innerHTML = `
+                            <div class="project-card-header">
+                                <div class="project-card-icon">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                                    </svg>
+                                </div>
+                                <span class="project-role ${roleClass}">${role}</span>
+                            </div>
+                            <div class="project-card-body">
+                                <h3>${project.details.name || project.name}</h3>
+                                ${desc ? `<p class="project-desc">${desc}</p>` : ''}
+                            </div>
+                            <div class="project-card-footer">
+                                <div class="project-meta">
+                                    <span>📄 ${fileCount} archivo${fileCount !== 1 ? 's' : ''}</span>
+                                    ${date ? `<span>📅 ${date}</span>` : ''}
+                                </div>
+                                <button class="btn btn-primary btn-open-project" data-id="${project.id}">
+                                    Abrir
+                                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M5 10h10M10 5l5 5-5 5"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        `;
+
+                        card.querySelector('.btn-open-project').addEventListener('click', (e) => {
+                            const pid = e.currentTarget.dataset.id;
+                            sessionStorage.setItem('openProjectId', pid);
+                            window.location.href = 'editor.html';
+                        });
+
+                        grid.appendChild(card);
+                    });
+                });
+            });
+        }
+    </script>
+</body>
+
+</html>
